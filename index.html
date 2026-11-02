@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GSDS Secure Camera</title>
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:16px;background:#eef2f7;font-family:Arial,sans-serif;color:#1f2937}.panel{max-width:520px;margin:0 auto;background:#fff;border-radius:16px;padding:20px;box-shadow:0 4px 18px #0002;text-align:center}h1{color:#064b85;font-size:23px;margin:4px 0 8px}.hint{font-size:13px;line-height:1.5;color:#555}.camera{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:12px;overflow:hidden;margin:16px auto}video{width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)}.status{background:#17202acc;color:#fff;padding:10px;border-radius:8px;font-size:13px;line-height:1.4;min-height:40px}button{border:0;border-radius:8px;padding:12px 16px;margin:5px;background:#0878d1;color:#fff;font-weight:bold;cursor:pointer;min-width:135px}button:disabled{background:#999;cursor:not-allowed}.allow{background:#16803c;width:95%}.danger{background:#9b2525}.small{font-size:11px;color:#777;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="panel">
+  <h1>GSDS Secure Camera</h1>
+  <p class="hint">This page handles camera access and facial descriptor capture. Return to the GSDS Clock In/Out page to complete registration or attendance.</p>
+  <div class="camera"><video id="video" autoplay muted playsinline></video></div>
+  <div id="cameraStatus" class="status">Camera permission has not been requested.</div>
+  <div style="margin-top:12px">
+    <button id="permissionBtn" class="allow">ALLOW CAMERA ACCESS</button>
+    <button id="switchBtn" disabled>SWITCH CAMERA</button>
+    <button id="closeBtn" class="danger">CLOSE CAMERA</button>
+  </div>
+  <p class="hint"><b>Instructions:</b> Click Allow Camera Access and approve the browser prompt. Keep this window open while using Clock In/Out. On mobile, use Chrome or Safari and allow camera access for this GitHub Pages site.</p>
+  <div class="small">GSDS Clock In/Out · Camera module</div>
+</div>
+<script>
+const MODEL_URL = "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights";
+const params = new URLSearchParams(location.search);
+const sessionNonce = params.get("session") || "";
+const video = document.getElementById("video");
+const statusEl = document.getElementById("cameraStatus");
+let cameraStream = null;
+let cameraFacing = "user";
+let cameraReady = false;
+let modelsLoaded = false;
+let detecting = false;
+
+function send(type, extra={}) {
+  if (!window.opener || window.opener.closed) return;
+  window.opener.postMessage({type, nonce:sessionNonce, ...extra}, "*");
+}
+function status(message, ready=false) {
+  statusEl.textContent = message;
+  send("GSDS_CAMERA_STATUS", {message, ready});
+}
+function errorMessage(err) {
+  const descriptions = {
+    NotAllowedError:"Permission denied. Allow camera access for this GitHub Pages site in browser and device settings.",
+    NotFoundError:"No camera was found on this device.",
+    NotReadableError:"The camera is busy or unavailable. Close other camera apps and retry.",
+    OverconstrainedError:"The selected camera does not support the requested settings.",
+    SecurityError:"The browser security policy blocked camera access. Open this HTTPS GitHub Pages page directly.",
+    AbortError:"The camera request was interrupted. Refresh and retry."
+  };
+  return (descriptions[err.name] || err.message || "Unknown camera error") + " [" + (err.name || "Error") + "]";
+}
+async function loadModels() {
+  if (modelsLoaded) return;
+  if (typeof faceapi === "undefined") throw new Error("face-api.js did not load. Check internet access or CDN availability.");
+  await Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+  ]);
+  modelsLoaded = true;
+}
+async function requestCamera() {
+  const btn = document.getElementById("permissionBtn");
+  btn.disabled = true;
+  status("Requesting camera permission...", false);
+  try {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) throw new Error("Camera API unavailable. Open this page using its HTTPS github.io URL in a supported browser.");
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:cameraFacing},width:{ideal:640},height:{ideal:480}}});
+    } catch (firstError) {
+      console.warn("Preferred camera constraints failed; retrying default camera", firstError);
+      stream = await navigator.mediaDevices.getUserMedia({audio:false,video:true});
+    }
+    cameraStream = stream;
+    video.srcObject = stream;
+    await video.play();
+    status("Camera connected. Loading facial recognition models...", false);
+    await loadModels();
+    cameraReady = true;
+    document.getElementById("switchBtn").disabled = false;
+    btn.textContent = "CAMERA READY";
+    status("Camera and facial recognition are ready. Return to the attendance page.", true);
+    runDetectionLoop();
+  } catch(err) {
+    console.error("Camera/model error", err);
+    cameraReady = false;
+    if (cameraStream) cameraStream.getTracks().forEach(t=>t.stop());
+    cameraStream = null;
+    btn.disabled = false;
+    btn.textContent = "ALLOW CAMERA ACCESS";
+    status("Camera setup failed: " + errorMessage(err), false);
+    send("GSDS_CAMERA_ERROR", {message:errorMessage(err)});
+  }
+}
+function stopCamera() {
+  if (cameraStream) cameraStream.getTracks().forEach(t=>t.stop());
+  cameraStream = null;
+  cameraReady = false;
+  video.srcObject = null;
+  status("Camera stopped.", false);
+}
+async function switchCamera() {
+  if (!cameraReady) return;
+  const next = cameraFacing === "user" ? "environment" : "user";
+  const old = cameraStream;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:next},width:{ideal:640},height:{ideal:480}}});
+    cameraFacing = next;
+    cameraStream = stream;
+    video.srcObject = stream;
+    await video.play();
+    if (old) old.getTracks().forEach(t=>t.stop());
+    status(cameraFacing === "user" ? "Front camera active." : "Rear camera active.", true);
+  } catch(err) {
+    status("Unable to switch camera: " + errorMessage(err), cameraReady);
+    send("GSDS_CAMERA_ERROR", {message:errorMessage(err)});
+  }
+}
+async function runDetectionLoop() {
+  if (detecting || !cameraReady) return;
+  detecting = true;
+  try {
+    const detections = await faceapi.detectAllFaces(video,new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.5}));
+    if (detections.length === 1) status("One face detected — ready for attendance.", true);
+    else if (detections.length > 1) status("Multiple faces detected — only one person may be visible.", true);
+    else status("No face detected — position your face in the camera.", true);
+  } catch(err) { console.error(err); }
+  detecting = false;
+  if (cameraReady) setTimeout(runDetectionLoop, 900);
+}
+async function captureAverageDescriptor() {
+  if (!cameraReady || !modelsLoaded) throw new Error("Camera and recognition models are not ready.");
+  const samples=[];
+  for (let i=0;i<3;i++) {
+    await new Promise(resolve=>setTimeout(resolve,650));
+    const detections=await faceapi.detectAllFaces(video,new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.5})).withFaceLandmarks().withFaceDescriptors();
+    if (detections.length!==1) throw new Error(detections.length===0 ? "No face detected. Face the camera." : "Multiple faces detected. Only one person should be visible.");
+    samples.push(Array.from(detections[0].descriptor));
+  }
+  const average=new Array(128).fill(0);
+  for(let i=0;i<128;i++) { for(let j=0;j<samples.length;j++) average[i]+=samples[j][i]; average[i]/=samples.length; }
+  return average;
+}
+window.addEventListener("message", async event=>{
+  if (!window.opener || event.source!==window.opener) return;
+  const data=event.data||{};
+  if (data.nonce!==sessionNonce) return;
+  if (data.type==="GSDS_CAPTURE_FACE") {
+    try {
+      status("Capturing three face samples. Please look at the camera...", true);
+      const descriptor=await captureAverageDescriptor();
+      send("GSDS_FACE_CAPTURED",{requestId:data.requestId,descriptor});
+      status("Face samples captured successfully.", true);
+    } catch(err) {
+      send("GSDS_FACE_CAPTURE_FAILED",{requestId:data.requestId,message:err.message});
+      status("Face capture failed: "+err.message, cameraReady);
+    }
+  } else if (data.type==="GSDS_SWITCH_CAMERA") {
+    await switchCamera();
+  }
+});
+document.getElementById("permissionBtn").addEventListener("click",requestCamera);
+document.getElementById("switchBtn").addEventListener("click",switchCamera);
+document.getElementById("closeBtn").addEventListener("click",()=>{stopCamera();window.close();});
+window.addEventListener("beforeunload",()=>{stopCamera();send("GSDS_CAMERA_STATUS",{message:"Camera window closed.",ready:false});});
+if (!sessionNonce) {
+  statusEl.textContent="Invalid camera session. Close this window and reopen it from GSDS Clock In/Out.";
+  document.getElementById("permissionBtn").disabled=true;
+} else {
+  send("GSDS_CAMERA_WINDOW_READY");
+}
+</script>
+</body>
+</html>
