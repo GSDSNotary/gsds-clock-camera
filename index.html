@@ -34,14 +34,21 @@ let cameraFacing = "user";
 let cameraReady = false;
 let modelsLoaded = false;
 let detecting = false;
+let faceCount = 0; 
 
 function send(type, extra={}) {
   if (!window.opener || window.opener.closed) return;
   window.opener.postMessage({type, nonce:sessionNonce, ...extra}, "*");
 }
-function status(message, ready=false) {
+function status(message, ready = false) {
+
   statusEl.textContent = message;
-  send("GSDS_CAMERA_STATUS", {message, ready});
+
+  send("GSDS_CAMERA_STATUS", {
+    message: message,
+    ready: cameraReady,
+    faceReady: cameraReady && faceCount === 1
+  });
 }
 function errorMessage(err) {
   const descriptions = {
@@ -174,26 +181,33 @@ window.addEventListener("message", async event=>{
   if (!window.opener || event.source!==window.opener) return;
   const data=event.data||{};
   if (data.nonce!==sessionNonce) return;
-  if (data.type==="GSDS_CAPTURE_FACE") {
-    try {
-      status("Capturing three face samples. Please look at the camera...", true);
-      const descriptor = await captureAverageDescriptor();
+  if (data.type === "GSDS_CAPTURE_FACE") {
 
-		const imageData = await captureAttendancePhoto();
-
+	  try {
+		status("Capturing three face samples. Please look at the camera.");
+		const descriptor = await captureAverageDescriptor();
+		let imageData = null;
+		// Only capture photograph during attendance
+		if (data.includePhoto === true) {
+		  imageData = await captureAttendancePhoto();
+		}
 		send("GSDS_FACE_CAPTURED", {
 		  requestId: data.requestId,
 		  descriptor: descriptor,
 		  imageData: imageData,
-		  imageType: "image/jpeg",
+		  imageType: imageData ? "image/jpeg" : null,
 		  capturedAt: new Date().toISOString()
 		});
-      status("Face samples captured successfully.", true);
-    } catch(err) {
-      send("GSDS_FACE_CAPTURE_FAILED",{requestId:data.requestId,message:err.message});
-      status("Face capture failed: "+err.message, cameraReady);
-    }
-  } else if (data.type==="GSDS_SWITCH_CAMERA") {
+
+		status("Face samples captured successfully.");
+	  } catch (err) {
+		send("GSDS_FACE_CAPTURE_FAILED", {
+		  requestId: data.requestId,
+		  message: err.message
+		});
+		status("Face capture failed: " + err.message);
+	  }
+	} else if (data.type==="GSDS_SWITCH_CAMERA") {
     await switchCamera();
   }
 });
