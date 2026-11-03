@@ -181,7 +181,6 @@ window.addEventListener("message", async event=>{
   const data=event.data||{};
   if (data.nonce!==sessionNonce) return;
   if (data.type === "GSDS_CAPTURE_FACE") {
-
 	  try {
 
 		status("Capturing face samples. Please look at the camera.");
@@ -214,6 +213,7 @@ window.addEventListener("message", async event=>{
 		});
 
 		status("Face capture failed: " + err.message);
+
 	  }
 	}
 });
