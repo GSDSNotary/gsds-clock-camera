@@ -154,8 +154,17 @@ window.addEventListener("message", async event=>{
   if (data.type==="GSDS_CAPTURE_FACE") {
     try {
       status("Capturing three face samples. Please look at the camera...", true);
-      const descriptor=await captureAverageDescriptor();
-      send("GSDS_FACE_CAPTURED",{requestId:data.requestId,descriptor});
+      const descriptor = await captureAverageDescriptor();
+
+		const imageData = await captureAttendancePhoto();
+
+		send("GSDS_FACE_CAPTURED", {
+		  requestId: data.requestId,
+		  descriptor: descriptor,
+		  imageData: imageData,
+		  imageType: "image/jpeg",
+		  capturedAt: new Date().toISOString()
+		});
       status("Face samples captured successfully.", true);
     } catch(err) {
       send("GSDS_FACE_CAPTURE_FAILED",{requestId:data.requestId,message:err.message});
@@ -174,6 +183,41 @@ if (!sessionNonce) {
   document.getElementById("permissionBtn").disabled=true;
 } else {
   send("GSDS_CAMERA_WINDOW_READY");
+}
+
+async function captureAttendancePhoto() {
+  if (!cameraReady || faceCount !== 1) {
+    throw new Error("Exactly one face must be detected before taking a photograph.");
+  }
+
+  if (video.readyState < 2 || !video.videoWidth) {
+    throw new Error("Camera video is not ready.");
+  }
+
+  const canvas = document.createElement("canvas");
+
+  // Limit image size for faster transmission
+  const maxWidth = 640;
+  const scale = Math.min(1, maxWidth / video.videoWidth);
+
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+
+  const context = canvas.getContext("2d");
+
+  // Mirror the photograph to match the front-camera preview
+  context.translate(canvas.width, 0);
+  context.scale(-1, 1);
+
+  context.drawImage(
+    video,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  return canvas.toDataURL("image/jpeg", 0.80);
 }
 </script>
 </body>
