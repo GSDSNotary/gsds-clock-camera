@@ -99,10 +99,16 @@ async function requestCamera() {
   }
 }
 function stopCamera() {
-  if (cameraStream) cameraStream.getTracks().forEach(t=>t.stop());
+
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+  }
   cameraStream = null;
   cameraReady = false;
+  faceCount = 0;
   video.srcObject = null;
+  document.getElementById("permissionBtn").disabled = false;
+  document.getElementById("permissionBtn").textContent = "ALLOW CAMERA ACCESS";
   status("Camera stopped.", false);
 }
 async function switchCamera() {
@@ -123,16 +129,33 @@ async function switchCamera() {
   }
 }
 async function runDetectionLoop() {
+
   if (detecting || !cameraReady) return;
   detecting = true;
   try {
-    const detections = await faceapi.detectAllFaces(video,new faceapi.TinyFaceDetectorOptions({inputSize:224,scoreThreshold:0.5}));
-    if (detections.length === 1) status("One face detected — ready for attendance.", true);
-    else if (detections.length > 1) status("Multiple faces detected — only one person may be visible.", true);
-    else status("No face detected — position your face in the camera.", true);
-  } catch(err) { console.error(err); }
+    const detections = await faceapi.detectAllFaces(
+      video,
+      new faceapi.TinyFaceDetectorOptions({
+        inputSize: 224,
+        scoreThreshold: 0.5
+      })
+    );
+    faceCount = detections.length;
+    if (faceCount === 1) {
+      status("One face detected — ready for attendance.", true);
+    } else if (faceCount > 1) {
+      status("Multiple faces detected — only one person may be visible.", true);
+    } else {
+      status("No face detected — position your face in the camera.", true);
+    }
+  } catch (err) {
+    console.error(err);
+    faceCount = 0;
+  }
   detecting = false;
-  if (cameraReady) setTimeout(runDetectionLoop, 900);
+  if (cameraReady) {
+    setTimeout(runDetectionLoop, 900);
+  }
 }
 async function captureAverageDescriptor() {
   if (!cameraReady || !modelsLoaded) throw new Error("Camera and recognition models are not ready.");
