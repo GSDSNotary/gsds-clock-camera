@@ -41,7 +41,6 @@ function send(type, extra={}) {
   window.opener.postMessage({type, nonce:sessionNonce, ...extra}, "*");
 }
 function status(message, ready = false) {
-
   statusEl.textContent = message;
 
   send("GSDS_CAMERA_STATUS", {
@@ -184,13 +183,17 @@ window.addEventListener("message", async event=>{
   if (data.type === "GSDS_CAPTURE_FACE") {
 
 	  try {
-		status("Capturing three face samples. Please look at the camera.");
+
+		status("Capturing face samples. Please look at the camera.");
+
 		const descriptor = await captureAverageDescriptor();
+
 		let imageData = null;
-		// Only capture photograph during attendance
+
 		if (data.includePhoto === true) {
 		  imageData = await captureAttendancePhoto();
 		}
+
 		send("GSDS_FACE_CAPTURED", {
 		  requestId: data.requestId,
 		  descriptor: descriptor,
@@ -200,16 +203,19 @@ window.addEventListener("message", async event=>{
 		});
 
 		status("Face samples captured successfully.");
+
 	  } catch (err) {
+
+		console.error("Face capture error:", err);
+
 		send("GSDS_FACE_CAPTURE_FAILED", {
 		  requestId: data.requestId,
 		  message: err.message
 		});
+
 		status("Face capture failed: " + err.message);
 	  }
-	} else if (data.type==="GSDS_SWITCH_CAMERA") {
-    await switchCamera();
-  }
+	}
 });
 document.getElementById("permissionBtn").addEventListener("click",requestCamera);
 document.getElementById("switchBtn").addEventListener("click",switchCamera);
